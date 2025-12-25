@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Fit Lab - 智能打卡系统</title>
+    <style>
+        :root {
+            --primary: #27ae60;
+            --danger: #e74c3c;
+            --bg: #f4f7f6;
+            --dark: #2c3e50;
+        }
+
+        body { font-family: 'PingFang SC', sans-serif; background: var(--bg); margin: 0; padding: 15px; color: var(--dark); }
+        .container { max-width: 900px; margin: 0 auto; }
+        
+        header { text-align: center; padding: 20px 0; }
+        header h1 { margin: 0; color: var(--primary); font-size: 24px; }
+
+        .status-board { background: white; border-radius: 20px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; display: flex; justify-content: space-around; text-align: center; }
+        .stat-item span { display: block; font-size: 12px; color: #7f8c8d; }
+        .stat-item strong { font-size: 20px; color: var(--primary); }
+
+        .calendar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
+        
+        .day-card { background: white; border-radius: 15px; padding: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-top: 5px solid #bdc3c7; }
+        .day-card.checked { border-top-color: var(--primary); background: #f0fff4; }
+        
+        .img-placeholder { width: 100%; height: 150px; background: #eee; border-radius: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; overflow: hidden; margin: 10px 0; border: 1px dashed #ccc; }
+        .img-placeholder img { width: 100%; height: 100%; object-fit: cover; }
+        input[type="file"] { display: none; }
+
+        textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 8px; box-sizing: border-box; height: 60px; font-size: 14px; margin-bottom: 10px; }
+
+        .btn-check { width: 100%; background: var(--dark); color: white; border: none; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-check.active { background: var(--primary); }
+
+        .settle-card { background: var(--dark); color: white; grid-column: 1 / -1; margin-top: 20px; padding: 25px; border-radius: 15px; text-align: center; }
+        .settle-card input { padding: 10px; border-radius: 8px; border: none; margin: 10px; font-size: 18px; width: 120px; }
+        .btn-settle { background: #3498db; color: white; border: none; padding: 12px 30px; border-radius: 8px; font-weight: bold; cursor: pointer; }
+
+        #modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 100; }
+        .modal-content { background: white; padding: 30px; border-radius: 20px; max-width: 80%; text-align: center; color: var(--dark); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header><h1>Smart Fit Lab | 饮食打卡系统</h1></header>
+
+    <div class="status-board">
+        <div class="stat-item"><span>本周打卡</span><strong id="check-count">0/6</strong></div>
+        <div class="stat-item"><span>状态</span><strong id="trend">记录中</strong></div>
+    </div>
+
+    <div class="calendar-grid" id="calendar"></div>
+
+    <div class="settle-card">
+        <h3>周日结算复盘</h3>
+        <p>输入今日体重，查看本周成效及下周建议</p>
+        <input type="number" step="0.1" id="weight-input" placeholder="体重kg">
+        <button class="btn-settle" onclick="runAnalysis()">分析数据</button>
+    </div>
+</div>
+
+<div id="modal">
+    <div class="modal-content">
+        <h2 id="modal-title"></h2>
+        <p id="modal-body"></p>
+        <button style="padding:10px 20px;" onclick="resetWeek()">开始新的一周</button>
+        <button style="padding:10px 20px; background:#ccc;" onclick="document.getElementById('modal').style.display='none'">关闭</button>
+    </div>
+</div>
+
+<script>
+    const days = ['周一', '周二', '周三', '周四', '周五', '周六'];
+    const tips = [
+        "没瘦？下周试着把晚餐换成纯蔬菜+蛋白质，不吃淀粉。",
+        "没瘦？增加饮水量，每天保证2000ml以上，提升代谢。",
+        "没瘦？检查是否有隐藏零食，下周加入3次30分钟快走。",
+        "瘦了！当前饮食方案非常适合你，请继续保持！"
+    ];
+
+    window.onload = () => {
+        const grid = document.getElementById('calendar');
+        days.forEach((day, i) => {
+            const saved = JSON.parse(localStorage.getItem(`diet-day-${i}`)) || {};
+            grid.innerHTML += `
+                <div class="day-card ${saved.checked ? 'checked' : ''}" id="card-${i}">
+                    <strong>${day}</strong>
+                    <label class="img-placeholder">
+                        <img src="${saved.img || ''}" id="prev-${i}" style="display:${saved.img ? 'block' : 'none'}">
+                        <span id="text-${i}" style="display:${saved.img ? 'none' : 'block'}">📷 点击上传图片</span>
+                        <input type="file" accept="image/*" onchange="preview(${i}, this)">
+                    </label>
+                    <textarea id="note-${i}" placeholder="吃了什么？">${saved.note || ''}</textarea>
+                    <button class="btn-check ${saved.checked ? 'active' : ''}" onclick="toggleDay(${i})">
+                        ${saved.checked ? '已打勾 ✓' : '打勾完成'}
+                    </button>
+                </div>`;
+        });
+        updateStats();
+    };
+
+    function preview(i, input) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            document.getElementById(`prev-${i}`).src = e.target.result;
+            document.getElementById(`prev-${i}`).style.display = 'block';
+            document.getElementById(`text-${i}`).style.display = 'none';
+            saveData(i);
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+
+    function toggleDay(i) {
+        const btn = document.querySelector(`#card-${i} .btn-check`);
+        btn.classList.toggle('active');
+        saveData(i);
+        location.reload();
+    }
+
+    function saveData(i) {
+        const card = document.getElementById(`card-${i}`);
+        const data = {
+            checked: card.querySelector('.btn-check').classList.contains('active'),
+            img: document.getElementById(`prev-${i}`).src,
+            note: document.getElementById(`note-${i}`).value
+        };
+        localStorage.setItem(`diet-day-${i}`, JSON.stringify(data));
+        updateStats();
+    }
+
+    function updateStats() {
+        let count = 0;
+        for(let i=0; i<6; i++) {
+            if(JSON.parse(localStorage.getItem(`diet-day-${i}`))?.checked) count++;
+        }
+        document.getElementById('check-count').innerText = `${count}/6`;
+    }
+
+    function runAnalysis() {
+        const weight = document.getElementById('weight-input').value;
+        if(!weight) return alert("请输入体重");
+        
+        const modal = document.getElementById('modal');
+        const isSuccess = weight < 70; // 假设初始值
+        document.getElementById('modal-title').innerText = isSuccess ? "🎉 恭喜！" : "💡 建议";
+        document.getElementById('modal-body').innerText = isSuccess ? tips[3] : tips[Math.floor(Math.random()*3)];
+        modal.style.display = 'flex';
+    }
+
+    function resetWeek() {
+        if(confirm("确定清空数据开始新一周吗？")) {
+            localStorage.clear();
+            location.reload();
+        }
+    }
+</script>
+</body>
+</html>
